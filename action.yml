@@ -62,10 +62,6 @@ inputs:
     description: 'Path to the Dockerfile. Default: <server-path>/Dockerfile.'
     required: false
     default: ''
-  server-port:
-    description: 'Port the backend listens on (HTTP + WS share it).'
-    required: false
-    default: '2567'
 
   # ---- endpoints (rarely changed) ----
   api-url:
@@ -203,8 +199,7 @@ runs:
           --arg c '${{ steps.meta.outputs.channel }}' \
           --arg i '${{ steps.meta.outputs.image }}' \
           --arg v '${{ steps.meta.outputs.version }}' \
-          --argjson p ${{ inputs.server-port }} \
-          '{channel:$c, image:$i, port:$p, version:$v}')
+          '{channel:$c, image:$i, version:$v}')
         curl -fsS --retry 4 --retry-delay 5 --retry-all-errors --retry-connrefused -X POST "${{ inputs.legion-url }}/v1/apps/${{ steps.meta.outputs.game-id }}/deploy" \
           -H "Authorization: Bearer ${{ inputs.deploy-token }}" \
           -H 'Content-Type: application/json' \

@@ -29,8 +29,7 @@ jobs:
       - uses: LEGiON-Platforms/bloxity-deploy@v1
         with:
           deploy-token: ${{ secrets.LEGION_DEPLOY_TOKEN }}
-          server-path: Server      # dir with your backend Dockerfile
-          server-port: 2567        # port your backend listens on
+          server-path: Server      # dir with your backend Dockerfile (default)
 ```
 
 > The action is public, but it grants no access on its own: every deploy requires a
@@ -65,8 +64,9 @@ The **Unity license is managed by Bloxity** — the action fetches it at build t
 | `skip-server` | `false` | Deploy frontend only. |
 | `server-path` | `Server` | Dir with the backend Dockerfile (build context). |
 | `server-dockerfile` | `<server-path>/Dockerfile` | Override if elsewhere. |
-| `server-port` | `2567` | Backend listen port (HTTP + WS). |
 | `api-url` / `legion-url` | bloxity.io | Rarely changed. |
+
+> Your backend listens on the `PORT` env var Bloxity injects (2567). Read it; don't hardcode a port.
 
 ## Building the frontend yourself?
 
