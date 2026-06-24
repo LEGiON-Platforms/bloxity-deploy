@@ -24,9 +24,6 @@ permissions:
 jobs:
   ship:
     runs-on: ubuntu-latest
-    env:
-      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}   # Unity Personal .ulf contents
-      # For Unity Pro instead: UNITY_SERIAL / UNITY_EMAIL / UNITY_PASSWORD
     steps:
       - uses: actions/checkout@v4
       - uses: LEGiON-Platforms/bloxity-deploy@v1
@@ -47,11 +44,12 @@ all resolved from it. On push it will:
 
 Both halves get the same version, so the dashboard shows them matched.
 
-## You provide two things
+## What you provide
 
-- **`LEGION_DEPLOY_TOKEN`** — your per-game token (re-viewable on hosting.bloxity.io). The only Bloxity secret.
-- **A Unity license** — `UNITY_LICENSE` (Personal) or `UNITY_SERIAL`/`UNITY_EMAIL`/`UNITY_PASSWORD` (Pro), as env. See [game-ci activation](https://game.ci/docs/github/activation).
+- **`LEGION_DEPLOY_TOKEN`** — your per-game token (re-viewable on hosting.bloxity.io). The only secret you set.
 - The image is pushed to **your repo's own ghcr** with the built-in `GITHUB_TOKEN` (hence `packages: write`). One-time: make the `*-server` package **public** so Legion can pull it, or ask us to wire a private pull secret.
+
+The **Unity license is managed by Bloxity** — the action fetches it at build time with your deploy token, so you configure no license.
 
 ## Inputs
 

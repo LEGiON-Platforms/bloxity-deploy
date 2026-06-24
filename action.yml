@@ -12,9 +12,11 @@ branding:
 # all derived from it. Frontend + backend are stamped with the same version, so the
 # hosting dashboard always shows them matched.
 #
-# The calling workflow must set:
+# The calling workflow only needs:
 #   permissions: { contents: read, packages: write }   # push the server image to ghcr
-#   env (Unity build): UNITY_LICENSE (+ UNITY_EMAIL/UNITY_PASSWORD for Pro)
+# The Unity license is managed by Bloxity and fetched at build time with the deploy
+# token — tenants configure no license. (If Bloxity hasn't configured one, the action
+# falls back to any UNITY_LICENSE/UNITY_SERIAL the caller sets itself.)
 
 inputs:
   deploy-token:
@@ -102,6 +104,40 @@ runs:
         echo "Bloxity deploy: $gid ($ch) v$ver"
 
     # ---------- CLIENT: Unity WebGL -> zip -> upload to Bloxity ----------
+    # Bloxity holds the Unity license. Fetch it with the deploy token and export it
+    # so the build below activates without the dev configuring anything. If none is
+    # configured server-side, fall back to any license the dev set themselves.
+    - name: Fetch managed Unity license
+      if: ${{ inputs.skip-client != 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        code=$(curl -sS -o /tmp/bloxlic.json -w '%{http_code}' \
+          "${{ inputs.api-url }}/v1/hosting/unity-license" \
+          -H "Authorization: Bearer ${{ inputs.deploy-token }}" || echo 000)
+        if [ "$code" != "200" ]; then
+          echo "::notice::No Bloxity-managed Unity license (HTTP $code); using any UNITY_LICENSE/UNITY_SERIAL you set yourself."
+          rm -f /tmp/bloxlic.json; exit 0
+        fi
+        lic=$(jq -r '.license // empty' /tmp/bloxlic.json)
+        serial=$(jq -r '.serial // empty' /tmp/bloxlic.json)
+        email=$(jq -r '.email // empty' /tmp/bloxlic.json)
+        pass=$(jq -r '.password // empty' /tmp/bloxlic.json)
+        rm -f /tmp/bloxlic.json
+        [ -n "$serial" ] && echo "::add-mask::$serial"
+        [ -n "$pass" ] && echo "::add-mask::$pass"
+        if [ -n "$serial" ]; then
+          echo "UNITY_SERIAL=$serial" >> "$GITHUB_ENV"
+        elif [ -n "$lic" ]; then
+          echo "::add-mask::$lic"
+          { echo "UNITY_LICENSE<<__BLOX_LIC_EOF__"; printf '%s\n' "$lic"; echo "__BLOX_LIC_EOF__"; } >> "$GITHUB_ENV"
+        else
+          echo "::error::Managed license response had neither a serial nor a license file."; exit 1
+        fi
+        [ -n "$email" ] && echo "UNITY_EMAIL=$email" >> "$GITHUB_ENV"
+        [ -n "$pass" ] && echo "UNITY_PASSWORD=$pass" >> "$GITHUB_ENV"
+        echo "Using the Bloxity-managed Unity license."
+
     - name: Build Unity client
       if: ${{ inputs.skip-client != 'true' }}
       uses: game-ci/unity-builder@v4
