@@ -85,7 +85,7 @@ runs:
       run: |
         set -euo pipefail
         # Resolve the game from the token alone — no gameId input needed.
-        gid=$(curl -fsS "${{ inputs.api-url }}/v1/hosting/resolve" \
+        gid=$(curl -fsS --retry 3 --retry-delay 3 --retry-all-errors "${{ inputs.api-url }}/v1/hosting/resolve" \
           -H "Authorization: Bearer ${{ inputs.deploy-token }}" | jq -r '.gameId // empty')
         if [ -z "$gid" ]; then
           echo "::error::Could not resolve a game from the deploy token. Is LEGION_DEPLOY_TOKEN set and valid?"
@@ -161,7 +161,7 @@ runs:
         fi
         ( cd "$out" && zip -qr "$GITHUB_WORKSPACE/bloxity-client.zip" . )
         echo "Client zip: $(du -h bloxity-client.zip | cut -f1)"
-        code=$(curl -sS -o /tmp/fe.json -w '%{http_code}' -X POST \
+        code=$(curl -sS --retry 3 --retry-delay 3 --retry-all-errors -o /tmp/fe.json -w '%{http_code}' -X POST \
           "${{ inputs.api-url }}/v1/hosting/games/${{ steps.meta.outputs.game-id }}/frontend?channel=${{ steps.meta.outputs.channel }}&version=${{ steps.meta.outputs.version }}" \
           -H "Authorization: Bearer ${{ inputs.deploy-token }}" \
           -H "Content-Type: application/zip" \
@@ -205,7 +205,7 @@ runs:
           --arg v '${{ steps.meta.outputs.version }}' \
           --argjson p ${{ inputs.server-port }} \
           '{channel:$c, image:$i, port:$p, version:$v}')
-        curl -fsS -X POST "${{ inputs.legion-url }}/v1/apps/${{ steps.meta.outputs.game-id }}/deploy" \
+        curl -fsS --retry 4 --retry-delay 5 --retry-all-errors --retry-connrefused -X POST "${{ inputs.legion-url }}/v1/apps/${{ steps.meta.outputs.game-id }}/deploy" \
           -H "Authorization: Bearer ${{ inputs.deploy-token }}" \
           -H 'Content-Type: application/json' \
           -d "$body"
