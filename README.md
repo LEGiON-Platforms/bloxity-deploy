@@ -1,11 +1,11 @@
 # Bloxity Deploy action
 
-Build a **Unity WebGL client** and a **Docker game backend**, and ship **both** to
-Bloxity Legion in one step. The frontend and backend get the **same version**, so the
-hosting dashboard always shows them matched.
+Build a **game client** (Unity WebGL, or a web / three.js bundle) and a **Docker
+backend**, and ship **both** to Bloxity Legion in one step. The frontend and backend
+get the **same version**, so the dashboard always shows them matched.
 
-It's opinionated: it assumes a Unity client and a server with a `Dockerfile` at a
-known path. Everything is overridable, and you can skip either half.
+Pick the client `engine`; the server half (Docker -> ghcr -> Legion) is identical for
+everyone. You can skip either half.
 
 ## Quickstart
 
@@ -37,18 +37,49 @@ jobs:
 > a token the resolve / deploy / upload endpoints simply return 401.
 
 The **deploy token is the only Bloxity input** — the game id, URLs and image name are
-all resolved from it. On push it will:
-1. build the Unity WebGL client, zip it, and upload it as your frontend,
-2. build `Server/` into your repo's ghcr, and roll it on Legion.
+all resolved from it. On push it builds your client (Unity by default) and uploads it
+as the frontend, and builds `Server/` into your repo's ghcr and rolls it on Legion.
+Both halves get the same version.
 
-Both halves get the same version, so the dashboard shows them matched.
+## Engines
+
+Default is Unity. Set `engine` for other clients.
+
+**Unity** (default) — game-ci WebGL build; the Unity license is Bloxity-managed (fetched with your token), so you configure nothing:
+```yaml
+- uses: LEGiON-Platforms/bloxity-deploy@v1
+  with:
+    deploy-token: ${{ secrets.LEGION_DEPLOY_TOKEN }}
+```
+
+**Web** (three.js, vite, any JS bundler) — runs a build command in `client-path`, uploads the output dir:
+```yaml
+- uses: LEGiON-Platforms/bloxity-deploy@v1
+  with:
+    deploy-token: ${{ secrets.LEGION_DEPLOY_TOKEN }}
+    engine: web
+    client-path: client                              # default '.'
+    client-build-command: npm ci && npm run build    # default
+    client-dist: dist                                # build output (relative to client-path)
+```
+
+**Prebuilt** (you built it yourself — any engine) — just point at the dir:
+```yaml
+- uses: LEGiON-Platforms/bloxity-deploy@v1
+  with:
+    deploy-token: ${{ secrets.LEGION_DEPLOY_TOKEN }}
+    engine: prebuilt
+    client-dist: build                               # your already-built static dir
+```
+
+(The dir must have an `index.html` at its root — that's what gets served.)
 
 ## What you provide
 
 - **`LEGION_DEPLOY_TOKEN`** — your per-game token (re-viewable on hosting.bloxity.io). The only secret you set.
 - The image is pushed to **your repo's own ghcr** with the built-in `GITHUB_TOKEN` (hence `packages: write`). One-time: make the `*-server` package **public** so Legion can pull it, or ask us to wire a private pull secret.
 
-The **Unity license is managed by Bloxity** — the action fetches it at build time with your deploy token, so you configure no license.
+For the **Unity** engine, the license is managed by Bloxity — the action fetches it at build time with your deploy token, so you configure no license. (`web` / `prebuilt` need no license.)
 
 ## Inputs
 
@@ -57,10 +88,14 @@ The **Unity license is managed by Bloxity** — the action fetches it at build t
 | `deploy-token` | (required) | `lgn_...` per-game token. **The only required input** — the game id is resolved from it. |
 | `channel` | branch-derived | `prod` on `main`, else `dev`. Override to force one. |
 | `version` | short SHA | Stamped on BOTH halves so they match. |
+| `engine` | `unity` | `unity` \| `web` \| `prebuilt`. |
 | `skip-client` | `false` | Deploy backend only. |
-| `client-path` | `.` | Unity project root. |
-| `unity-version` | `auto` | Read from `ProjectSettings/ProjectVersion.txt`. |
-| `build-target` | `WebGL` | Unity build target. |
+| `client-path` | `.` | Client project root (Unity project, or the web project to build). |
+| `client-dist` | `dist` | Built dir to upload. web: relative to client-path; prebuilt: the dir (required); unity: ignored. |
+| `client-build-command` | `npm ci && npm run build` | `engine: web` build command. |
+| `node-version` | `20` | `engine: web` Node version. |
+| `unity-version` | `auto` | `engine: unity` — read from `ProjectSettings/ProjectVersion.txt`. |
+| `build-target` | `WebGL` | `engine: unity` build target. |
 | `skip-server` | `false` | Deploy frontend only. |
 | `server-path` | `Server` | Dir with the backend Dockerfile (build context). |
 | `server-dockerfile` | `<server-path>/Dockerfile` | Override if elsewhere. |

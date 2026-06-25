@@ -1,26 +1,26 @@
 name: 'Bloxity Deploy'
-description: 'Build a Unity WebGL client + a Docker game backend and ship BOTH to Bloxity Legion from one token.'
+description: 'Build a game client (Unity WebGL or a web/three.js bundle) + a Docker backend and ship BOTH to Bloxity Legion from one token.'
 author: 'Bloxity'
 branding:
   icon: 'upload-cloud'
   color: 'blue'
 
-# Opinionated by design: assumes a Unity client and a server with a Dockerfile at a
-# known path. Everything is overridable, and you can skip either half.
+# The ONLY required input is the deploy token. game id, URLs and image name are all
+# derived from it; frontend + backend get the same version so the dashboard shows them
+# matched. Pick the client engine; the server half (Docker -> ghcr -> Legion) is the
+# same for everyone.
 #
-# The ONLY Bloxity input is the deploy token. The game id, URLs and image name are
-# all derived from it. Frontend + backend are stamped with the same version, so the
-# hosting dashboard always shows them matched.
+#   engine: unity     (default) build a Unity WebGL client via game-ci. License is
+#                     Bloxity-managed (fetched with the token) — configure nothing.
+#   engine: web       a JS/web client (three.js, vite, etc.): run a build command and
+#                     upload its output dir.
+#   engine: prebuilt  you already built the static client — just point at the dir.
 #
-# The calling workflow only needs:
-#   permissions: { contents: read, packages: write }   # push the server image to ghcr
-# The Unity license is managed by Bloxity and fetched at build time with the deploy
-# token — tenants configure no license. (If Bloxity hasn't configured one, the action
-# falls back to any UNITY_LICENSE/UNITY_SERIAL the caller sets itself.)
+# Calling workflow needs: permissions: { contents: read, packages: write }.
 
 inputs:
   deploy-token:
-    description: 'Per-game deploy token (lgn_...). The only required input. Store it as a repo secret.'
+    description: 'Per-game deploy token (lgn_...). The only required input.'
     required: true
   channel:
     description: "prod or dev. Default: derive from branch (main -> prod, else dev)."
@@ -31,15 +31,25 @@ inputs:
     required: false
     default: ''
 
-  # ---- client (Unity) ----
+  # ---- client ----
+  engine:
+    description: 'Client engine: unity (default) | web (three.js/vite/any JS bundler) | prebuilt.'
+    required: false
+    default: 'unity'
   skip-client:
     description: 'Set true to deploy only the backend.'
     required: false
     default: 'false'
   client-path:
-    description: 'Path to the Unity project root.'
+    description: 'Client project root (Unity project, or the web project to build).'
     required: false
     default: '.'
+  client-dist:
+    description: 'Built static dir to upload. web: relative to client-path (default dist). prebuilt: the dir to upload (REQUIRED). unity: ignored.'
+    required: false
+    default: ''
+
+  # ---- engine: unity ----
   unity-version:
     description: "Unity version, or 'auto' to read ProjectSettings/ProjectVersion.txt."
     required: false
@@ -48,6 +58,16 @@ inputs:
     description: 'Unity build target. Keep WebGL for a browser client.'
     required: false
     default: 'WebGL'
+
+  # ---- engine: web ----
+  client-build-command:
+    description: 'Build command run in client-path (engine: web).'
+    required: false
+    default: 'npm ci && npm run build'
+  node-version:
+    description: 'Node version for the web build (engine: web).'
+    required: false
+    default: '20'
 
   # ---- server (Docker) ----
   skip-server:
@@ -84,27 +104,35 @@ runs:
         gid=$(curl -fsS --retry 3 --retry-delay 3 --retry-all-errors "${{ inputs.api-url }}/v1/hosting/resolve" \
           -H "Authorization: Bearer ${{ inputs.deploy-token }}" | jq -r '.gameId // empty')
         if [ -z "$gid" ]; then
-          echo "::error::Could not resolve a game from the deploy token. Is LEGION_DEPLOY_TOKEN set and valid?"
+          echo "::error::Could not resolve a game from the deploy token. Is it set and valid?"
           exit 1
         fi
         ch='${{ inputs.channel }}'
         if [ -z "$ch" ]; then [ "$GITHUB_REF_NAME" = "main" ] && ch=prod || ch=dev; fi
         ver='${{ inputs.version }}'; [ -z "$ver" ] && ver="${GITHUB_SHA::7}"
         owner="${GITHUB_REPOSITORY_OWNER,,}"   # ghcr requires a lowercase owner
+        # Normalise the engine (accept friendly aliases).
+        eng="${{ inputs.engine }}"; eng="${eng,,}"
+        case "$eng" in
+          ''|unity) eng=unity ;;
+          web|threejs|three|three.js|vite|js|html) eng=web ;;
+          prebuilt|static|none) eng=prebuilt ;;
+          *) echo "::error::unknown engine '$eng' (use: unity | web | prebuilt)"; exit 1 ;;
+        esac
+        echo "engine=$eng" >> "$GITHUB_OUTPUT"
         echo "game-id=$gid" >> "$GITHUB_OUTPUT"
         echo "channel=$ch" >> "$GITHUB_OUTPUT"
         echo "version=$ver" >> "$GITHUB_OUTPUT"
         echo "image=ghcr.io/${owner}/${gid}-server:${ch}-${ver}" >> "$GITHUB_OUTPUT"
         echo "host=$([ "$ch" = prod ] && echo host || echo dev.host)" >> "$GITHUB_OUTPUT"
         echo "play=$([ "$ch" = prod ] && echo play || echo dev.play)" >> "$GITHUB_OUTPUT"
-        echo "Bloxity deploy: $gid ($ch) v$ver"
+        echo "Bloxity deploy: $gid ($ch) v$ver  [client engine: $eng]"
 
-    # ---------- CLIENT: Unity WebGL -> zip -> upload to Bloxity ----------
-    # Bloxity holds the Unity license. Fetch it with the deploy token and export it
-    # so the build below activates without the dev configuring anything. If none is
-    # configured server-side, fall back to any license the dev set themselves.
+    # ---------- CLIENT (engine: unity) ----------
+    # Bloxity holds the Unity license; fetch it with the token so the build activates
+    # with no dev config. Falls back to any UNITY_LICENSE/UNITY_SERIAL the caller set.
     - name: Fetch managed Unity license
-      if: ${{ inputs.skip-client != 'true' }}
+      if: ${{ inputs.skip-client != 'true' && steps.meta.outputs.engine == 'unity' }}
       shell: bash
       run: |
         set -euo pipefail
@@ -135,7 +163,7 @@ runs:
         echo "Using the Bloxity-managed Unity license."
 
     - name: Build Unity client
-      if: ${{ inputs.skip-client != 'true' }}
+      if: ${{ inputs.skip-client != 'true' && steps.meta.outputs.engine == 'unity' }}
       uses: game-ci/unity-builder@v4
       with:
         projectPath: ${{ inputs.client-path }}
@@ -144,16 +172,39 @@ runs:
         buildName: ${{ inputs.build-target }}
         buildsPath: bloxity-build
 
+    # ---------- CLIENT (engine: web) ----------
+    - name: Set up Node
+      if: ${{ inputs.skip-client != 'true' && steps.meta.outputs.engine == 'web' }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Build web client
+      if: ${{ inputs.skip-client != 'true' && steps.meta.outputs.engine == 'web' }}
+      shell: bash
+      working-directory: ${{ inputs.client-path }}
+      run: |
+        set -euo pipefail
+        ${{ inputs.client-build-command }}
+
+    # ---------- CLIENT: zip the built dir + upload (all engines) ----------
     - name: Zip + upload client
       if: ${{ inputs.skip-client != 'true' }}
       shell: bash
       run: |
         set -euo pipefail
-        out="bloxity-build/${{ inputs.build-target }}/${{ inputs.build-target }}"
+        case "${{ steps.meta.outputs.engine }}" in
+          unity)
+            out="bloxity-build/${{ inputs.build-target }}/${{ inputs.build-target }}" ;;
+          web)
+            d='${{ inputs.client-dist }}'; [ -z "$d" ] && d=dist
+            out="${{ inputs.client-path }}/$d" ;;
+          prebuilt)
+            out='${{ inputs.client-dist }}'
+            [ -z "$out" ] && { echo "::error::engine=prebuilt needs client-dist (the built dir to upload)"; exit 1; } ;;
+        esac
         if [ ! -f "$out/index.html" ]; then
-          echo "::error::Unity build output not found at $out (expected index.html). Tree:"
-          ls -R bloxity-build || true
-          exit 1
+          echo "::error::No index.html in the client output ($out). Tree:"; ls -R "$out" 2>/dev/null | head -40 || true; exit 1
         fi
         ( cd "$out" && zip -qr "$GITHUB_WORKSPACE/bloxity-client.zip" . )
         echo "Client zip: $(du -h bloxity-client.zip | cut -f1)"
